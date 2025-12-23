@@ -1,6 +1,8 @@
 """
-Minimal MCP widget server (Python)
-- FastMCP
+STDIO MCP widget server (ChatGPT-compatible)
+
+- MCP over stdio (supported by ChatGPT)
+- Tool + Resource
 - HTML widget (Skybridge)
 - structuredContent hydration
 """
@@ -13,11 +15,9 @@ from typing import Dict, List, Any
 from copy import deepcopy
 
 import mcp.types as types
-from mcp.server.fastmcp import FastMCP
+from mcp.server import Server
 
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 
 # ----------------------------
 # CONFIG
@@ -87,12 +87,12 @@ TOOL_SCHEMA: Dict[str, Any] = {
 }
 
 # ----------------------------
-# MCP SERVER
+# MCP SERVER (STDIO)
 # ----------------------------
 
-mcp = FastMCP(
+server = Server(
     name="stock-carousel-mcp",
-    stateless_http=True,
+    version="1.0.0",
 )
 
 def widget_meta(w: Widget) -> Dict[str, Any]:
@@ -107,7 +107,7 @@ def widget_meta(w: Widget) -> Dict[str, Any]:
 # LIST TOOLS
 # ----------------------------
 
-@mcp._mcp_server.list_tools()
+@server.list_tools()
 async def list_tools():
     return [
         types.Tool(
@@ -129,7 +129,7 @@ async def list_tools():
 # LIST RESOURCES
 # ----------------------------
 
-@mcp._mcp_server.list_resources()
+@server.list_resources()
 async def list_resources():
     return [
         types.Resource(
@@ -147,56 +147,50 @@ async def list_resources():
 # READ RESOURCE (HTML)
 # ----------------------------
 
+@server.read_resource()
 async def read_resource(req: types.ReadResourceRequest):
     widget = WIDGET_BY_URI.get(str(req.params.uri))
     if not widget:
-        return types.ServerResult(
-            types.ReadResourceResult(contents=[])
-        )
+        return types.ReadResourceResult(contents=[])
 
-    return types.ServerResult(
-        types.ReadResourceResult(
-            contents=[
-                types.TextResourceContents(
-                    uri=widget.template_uri,
-                    mimeType=MIME_TYPE,
-                    text=widget.html,
-                    _meta=widget_meta(widget),
-                )
-            ]
-        )
+    return types.ReadResourceResult(
+        contents=[
+            types.TextResourceContents(
+                uri=widget.template_uri,
+                mimeType=MIME_TYPE,
+                text=widget.html,
+                _meta=widget_meta(widget),
+            )
+        ]
     )
 
 # ----------------------------
 # CALL TOOL
 # ----------------------------
 
+@server.call_tool()
 async def call_tool(req: types.CallToolRequest):
     widget = WIDGET_BY_ID.get(req.params.name)
     if not widget:
-        return types.ServerResult(
-            types.CallToolResult(
-                content=[types.TextContent(type="text", text="Unknown tool")],
-                isError=True,
-            )
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text="Unknown tool")],
+            isError=True,
         )
 
     try:
         StockInput.model_validate(req.params.arguments or {})
     except ValidationError as e:
-        return types.ServerResult(
-            types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text",
-                        text=f"Invalid input: {e.errors()}",
-                    )
-                ],
-                isError=True,
-            )
+        return types.CallToolResult(
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=f"Invalid input: {e.errors()}",
+                )
+            ],
+            isError=True,
         )
 
-    # 👇 DATA HYDRATES THE WIDGET
+    # 👇 DATA THAT HYDRATES THE WIDGET
     structured_content = {
         "stocks": [
             {"symbol": "RELIANCE", "price": 2485, "change": "+1.2%"},
@@ -205,78 +199,24 @@ async def call_tool(req: types.CallToolRequest):
         ]
     }
 
-    return types.ServerResult(
-        types.CallToolResult(
-            content=[
-                types.TextContent(
-                    type="text",
-                    text=widget.response_text,
-                )
-            ],
-            structuredContent=structured_content,
-            _meta={
-                "openai/toolInvocation/invoking": widget.invoking,
-                "openai/toolInvocation/invoked": widget.invoked,
-            },
-        )
+    return types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text",
+                text=widget.response_text,
+            )
+        ],
+        structuredContent=structured_content,
+        _meta={
+            "openai/toolInvocation/invoking": widget.invoking,
+            "openai/toolInvocation/invoked": widget.invoked,
+        },
     )
 
 # ----------------------------
-# WIRE MCP HANDLERS
-# ----------------------------
-
-mcp._mcp_server.request_handlers[types.ReadResourceRequest] = read_resource
-mcp._mcp_server.request_handlers[types.CallToolRequest] = call_tool
-
-# ----------------------------
-# HTTP APP (STARLETTE)
-# ----------------------------
-
-# ----------------------------
-# HTTP APP (FINAL FIX)
-# ----------------------------
-
-from starlette.applications import Starlette
-from starlette.routing import Mount
-from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.middleware.cors import CORSMiddleware
-
-mcp_app = mcp.streamable_http_app()
-
-app = Starlette(
-    routes=[
-        Mount("/mcp", app=mcp_app),
-        Mount("/.well-known/mcp", app=mcp_app),
-    ]
-)
-
-# ✅ CRITICAL: allow Render + ChatGPT host headers
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=["*"],
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-# ----------------------------
-# RUN (RENDER + MCP FIX)
+# RUN (STDIO)
 # ----------------------------
 
 if __name__ == "__main__":
-    import os
-    import uvicorn
-
-    port = int(os.environ.get("PORT", 8000))
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        http="h11",
-        proxy_headers=True,
-        forwarded_allow_ips="*",
-    )
+    import asyncio
+    asyncio.run(server.run_stdio())
