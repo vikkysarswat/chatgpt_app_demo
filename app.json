@@ -1,0 +1,25 @@
+{
+  "name": "carousel-data-app",
+  "description": "Displays data in ChatGPT using carousel cards",
+  "version": "1.0.0",
+  "endpoint": {
+    "url": "http://localhost:8000",
+    "type": "http"
+  },
+  "tools": [
+    {
+      "name": "show_carousel",
+      "description": "Display data in carousel format",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "User query"
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}
