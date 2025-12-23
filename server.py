@@ -138,6 +138,8 @@ async def list_tools():
 # LIST RESOURCES
 # ----------------------------
 
+
+
 @mcp._mcp_server.list_resources()
 async def list_resources():
     return [
@@ -236,6 +238,9 @@ async def call_tool(req: types.CallToolRequest):
 
 mcp._mcp_server.request_handlers[types.ReadResourceRequest] = read_resource
 mcp._mcp_server.request_handlers[types.CallToolRequest] = call_tool
+from fastapi.middleware.cors import CORSMiddleware
+
+
 
 
 # ----------------------------
@@ -245,10 +250,24 @@ mcp._mcp_server.request_handlers[types.CallToolRequest] = call_tool
 app = mcp.streamable_http_app()
 
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/mcp")
+async def mcp_endpoint():
+    return await mcp.handle_http_request()
 # ----------------------------
 # RUN
 # ----------------------------
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        http="h11",       # <--- force HTTP/1.1
+    )
