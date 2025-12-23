@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Stock Quote</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 16px;
+      }
+      .price {
+        font-size: 32px;
+        font-weight: bold;
+      }
+      .change.up {
+        color: green;
+      }
+      .change.down {
+        color: red;
+      }
+    </style>
+  </head>
+  <body>
+    <h2 id="symbol">—</h2>
+    <div class="price" id="price">—</div>
+    <div class="change" id="change">—</div>
+
+    <script>
+      const data = window.__SKYBRIDGE_DATA__ || {};
+
+      document.getElementById("symbol").textContent =
+        data.symbol || "Unknown Symbol";
+
+      document.getElementById("price").textContent =
+        data.price !== undefined ? `$${data.price}` : "—";
+
+      const changeEl = document.getElementById("change");
+      if (data.change !== undefined) {
+        changeEl.textContent =
+          (data.change >= 0 ? "+" : "") + data.change;
+        changeEl.className =
+          "change " + (data.change >= 0 ? "up" : "down");
+      }
+    </script>
+  </body>
+</html>
