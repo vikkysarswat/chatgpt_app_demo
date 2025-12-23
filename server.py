@@ -1,232 +1,307 @@
-"""
-STDIO MCP widget server (ChatGPT-compatible)
+"""Pizzaz demo MCP server implemented with the Python FastMCP helper.
 
-- MCP over stdio (supported by ChatGPT)
-- Tool + Resource
-- HTML widget (Skybridge)
-- structuredContent hydration
-"""
+The server mirrors the Node example in this repository and exposes
+widget-backed tools that render the Pizzaz UI bundle. Each handler returns the
+HTML shell via an MCP resource and echoes the selected topping as structured
+content so the ChatGPT client can hydrate the widget. The module also wires the
+handlers into an HTTP/SSE stack so you can run the server with uvicorn on port
+8000, matching the Node transport behavior."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Any
 from copy import deepcopy
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, List
 
 import mcp.types as types
-from mcp.server import Server
+from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from pydantic import BaseModel, Field, ConfigDict, ValidationError
-
-# ----------------------------
-# CONFIG
-# ----------------------------
-
-ASSETS_DIR = Path(__file__).parent / "assets"
-MIME_TYPE = "text/html+skybridge"
-
-# ----------------------------
-# WIDGET MODEL
-# ----------------------------
 
 @dataclass(frozen=True)
-class Widget:
+class PizzazWidget:
     identifier: str
     title: str
     template_uri: str
-    html: str
     invoking: str
     invoked: str
+    html: str
     response_text: str
 
 
-def load_html(name: str) -> str:
-    path = ASSETS_DIR / f"{name}.html"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing widget HTML: {path}\n"
-            "Create assets/stock-carousel.html"
-        )
-    return path.read_text(encoding="utf-8")
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
-# ----------------------------
-# WIDGET REGISTRY
-# ----------------------------
 
-widgets: List[Widget] = [
-    Widget(
-        identifier="show-stock-carousel",
-        title="Show Stock Carousel",
-        template_uri="ui://widget/stock-carousel.html",
-        html=load_html("stock-carousel"),
-        invoking="Loading market carousel",
-        invoked="Market carousel rendered",
-        response_text="Rendered stock carousel",
+@lru_cache(maxsize=None)
+def _load_widget_html(component_name: str) -> str:
+    html_path = ASSETS_DIR / f"{component_name}.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf8")
+
+    fallback_candidates = sorted(ASSETS_DIR.glob(f"{component_name}-*.html"))
+    if fallback_candidates:
+        return fallback_candidates[-1].read_text(encoding="utf8")
+
+    raise FileNotFoundError(
+        f'Widget HTML for "{component_name}" not found in {ASSETS_DIR}. '
+        "Run `pnpm run build` to generate the assets before starting the server."
     )
+
+
+widgets: List[PizzazWidget] = [
+    PizzazWidget(
+        identifier="pizza-map",
+        title="Show Pizza Map",
+        template_uri="ui://widget/pizza-map.html",
+        invoking="Hand-tossing a map",
+        invoked="Served a fresh map",
+        html=_load_widget_html("pizzaz"),
+        response_text="Rendered a pizza map!",
+    ),
+    PizzazWidget(
+        identifier="pizza-carousel",
+        title="Show Pizza Carousel",
+        template_uri="ui://widget/pizza-carousel.html",
+        invoking="Carousel some spots",
+        invoked="Served a fresh carousel",
+        html=_load_widget_html("pizzaz-carousel"),
+        response_text="Rendered a pizza carousel!",
+    ),
+    PizzazWidget(
+        identifier="pizza-albums",
+        title="Show Pizza Album",
+        template_uri="ui://widget/pizza-albums.html",
+        invoking="Hand-tossing an album",
+        invoked="Served a fresh album",
+        html=_load_widget_html("pizzaz-albums"),
+        response_text="Rendered a pizza album!",
+    ),
+    PizzazWidget(
+        identifier="pizza-list",
+        title="Show Pizza List",
+        template_uri="ui://widget/pizza-list.html",
+        invoking="Hand-tossing a list",
+        invoked="Served a fresh list",
+        html=_load_widget_html("pizzaz-list"),
+        response_text="Rendered a pizza list!",
+    ),
+    PizzazWidget(
+        identifier="pizza-shop",
+        title="Open Pizzaz Shop",
+        template_uri="ui://widget/pizza-shop.html",
+        invoking="Opening the shop",
+        invoked="Shop opened",
+        html=_load_widget_html("pizzaz-shop"),
+        response_text="Rendered the Pizzaz shop!",
+    ),
 ]
 
-WIDGET_BY_ID: Dict[str, Widget] = {w.identifier: w for w in widgets}
-WIDGET_BY_URI: Dict[str, Widget] = {w.template_uri: w for w in widgets}
 
-# ----------------------------
-# INPUT SCHEMA
-# ----------------------------
-
-class StockInput(BaseModel):
-    query: str = Field(description="User query")
-
-    model_config = ConfigDict(extra="forbid")
+MIME_TYPE = "text/html+skybridge"
 
 
-TOOL_SCHEMA: Dict[str, Any] = {
+WIDGETS_BY_ID: Dict[str, PizzazWidget] = {
+    widget.identifier: widget for widget in widgets
+}
+WIDGETS_BY_URI: Dict[str, PizzazWidget] = {
+    widget.template_uri: widget for widget in widgets
+}
+
+
+class PizzaInput(BaseModel):
+    """Schema for pizza tools."""
+
+    pizza_topping: str = Field(
+        ...,
+        alias="pizzaTopping",
+        description="Topping to mention when rendering the widget.",
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+mcp = FastMCP(
+    name="pizzaz-python",
+    stateless_http=True,
+)
+
+
+TOOL_INPUT_SCHEMA: Dict[str, Any] = {
     "type": "object",
-    "properties": {"query": {"type": "string"}},
-    "required": ["query"],
+    "properties": {
+        "pizzaTopping": {
+            "type": "string",
+            "description": "Topping to mention when rendering the widget.",
+        }
+    },
+    "required": ["pizzaTopping"],
     "additionalProperties": False,
 }
 
-# ----------------------------
-# MCP SERVER (STDIO)
-# ----------------------------
 
-server = Server(
-    name="stock-carousel-mcp",
-    version="1.0.0",
-)
+def _resource_description(widget: PizzazWidget) -> str:
+    return f"{widget.title} widget markup"
 
-def widget_meta(w: Widget) -> Dict[str, Any]:
+
+def _tool_meta(widget: PizzazWidget) -> Dict[str, Any]:
     return {
-        "openai/outputTemplate": w.template_uri,
+        "openai/outputTemplate": widget.template_uri,
+        "openai/toolInvocation/invoking": widget.invoking,
+        "openai/toolInvocation/invoked": widget.invoked,
         "openai/widgetAccessible": True,
-        "openai/toolInvocation/invoking": w.invoking,
-        "openai/toolInvocation/invoked": w.invoked,
     }
 
-# ----------------------------
-# LIST TOOLS
-# ----------------------------
 
-@server.list_tools()
-async def list_tools():
+def _tool_invocation_meta(widget: PizzazWidget) -> Dict[str, Any]:
+    return {
+        "openai/toolInvocation/invoking": widget.invoking,
+        "openai/toolInvocation/invoked": widget.invoked,
+    }
+
+
+@mcp._mcp_server.list_tools()
+async def _list_tools() -> List[types.Tool]:
     return [
         types.Tool(
-            name=w.identifier,
-            title=w.title,
-            description=w.title,
-            inputSchema=deepcopy(TOOL_SCHEMA),
-            _meta=widget_meta(w),
+            name=widget.identifier,
+            title=widget.title,
+            description=widget.title,
+            inputSchema=deepcopy(TOOL_INPUT_SCHEMA),
+            _meta=_tool_meta(widget),
+            # To disable the approval prompt for the tools
             annotations={
-                "readOnlyHint": True,
                 "destructiveHint": False,
                 "openWorldHint": False,
+                "readOnlyHint": True,
             },
         )
-        for w in widgets
+        for widget in widgets
     ]
 
-# ----------------------------
-# LIST RESOURCES
-# ----------------------------
 
-@server.list_resources()
-async def list_resources():
+@mcp._mcp_server.list_resources()
+async def _list_resources() -> List[types.Resource]:
     return [
         types.Resource(
-            name=w.title,
-            title=w.title,
-            uri=w.template_uri,
+            name=widget.title,
+            title=widget.title,
+            uri=widget.template_uri,
+            description=_resource_description(widget),
             mimeType=MIME_TYPE,
-            description=f"{w.title} widget",
-            _meta=widget_meta(w),
+            _meta=_tool_meta(widget),
         )
-        for w in widgets
+        for widget in widgets
     ]
 
-# ----------------------------
-# READ RESOURCE (HTML)
-# ----------------------------
 
-@server.read_resource()
-async def read_resource(req: types.ReadResourceRequest):
-    widget = WIDGET_BY_URI.get(str(req.params.uri))
-    if not widget:
-        return types.ReadResourceResult(contents=[])
+@mcp._mcp_server.list_resource_templates()
+async def _list_resource_templates() -> List[types.ResourceTemplate]:
+    return [
+        types.ResourceTemplate(
+            name=widget.title,
+            title=widget.title,
+            uriTemplate=widget.template_uri,
+            description=_resource_description(widget),
+            mimeType=MIME_TYPE,
+            _meta=_tool_meta(widget),
+        )
+        for widget in widgets
+    ]
 
-    return types.ReadResourceResult(
-        contents=[
-            types.TextResourceContents(
-                uri=widget.template_uri,
-                mimeType=MIME_TYPE,
-                text=widget.html,
-                _meta=widget_meta(widget),
+
+async def _handle_read_resource(req: types.ReadResourceRequest) -> types.ServerResult:
+    widget = WIDGETS_BY_URI.get(str(req.params.uri))
+    if widget is None:
+        return types.ServerResult(
+            types.ReadResourceResult(
+                contents=[],
+                _meta={"error": f"Unknown resource: {req.params.uri}"},
             )
-        ]
-    )
-
-# ----------------------------
-# CALL TOOL
-# ----------------------------
-
-@server.call_tool()
-async def call_tool(req: types.CallToolRequest):
-    widget = WIDGET_BY_ID.get(req.params.name)
-    if not widget:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text="Unknown tool")],
-            isError=True,
         )
 
+    contents = [
+        types.TextResourceContents(
+            uri=widget.template_uri,
+            mimeType=MIME_TYPE,
+            text=widget.html,
+            _meta=_tool_meta(widget),
+        )
+    ]
+
+    return types.ServerResult(types.ReadResourceResult(contents=contents))
+
+
+async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
+    widget = WIDGETS_BY_ID.get(req.params.name)
+    if widget is None:
+        return types.ServerResult(
+            types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=f"Unknown tool: {req.params.name}",
+                    )
+                ],
+                isError=True,
+            )
+        )
+
+    arguments = req.params.arguments or {}
     try:
-        StockInput.model_validate(req.params.arguments or {})
-    except ValidationError as e:
-        return types.CallToolResult(
+        payload = PizzaInput.model_validate(arguments)
+    except ValidationError as exc:
+        return types.ServerResult(
+            types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=f"Input validation error: {exc.errors()}",
+                    )
+                ],
+                isError=True,
+            )
+        )
+
+    topping = payload.pizza_topping
+    meta = _tool_invocation_meta(widget)
+
+    return types.ServerResult(
+        types.CallToolResult(
             content=[
                 types.TextContent(
                     type="text",
-                    text=f"Invalid input: {e.errors()}",
+                    text=widget.response_text,
                 )
             ],
-            isError=True,
+            structuredContent={"pizzaTopping": topping},
+            _meta=meta,
         )
-
-    # 👇 DATA THAT HYDRATES THE WIDGET
-    structured_content = {
-        "stocks": [
-            {"symbol": "RELIANCE", "price": 2485, "change": "+1.2%"},
-            {"symbol": "TCS", "price": 3912, "change": "-0.4%"},
-            {"symbol": "HDFCBANK", "price": 1642, "change": "+0.7%"},
-        ]
-    }
-
-    return types.CallToolResult(
-        content=[
-            types.TextContent(
-                type="text",
-                text=widget.response_text,
-            )
-        ],
-        structuredContent=structured_content,
-        _meta={
-            "openai/toolInvocation/invoking": widget.invoking,
-            "openai/toolInvocation/invoked": widget.invoked,
-        },
     )
 
-# ----------------------------
-# RUN (STDIO – CORRECT FINAL)
-# ----------------------------
+
+mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_request
+mcp._mcp_server.request_handlers[types.ReadResourceRequest] = _handle_read_resource
+
+
+app = mcp.streamable_http_app()
+
+try:
+    from starlette.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=False,
+    )
+except Exception:
+    pass
+
 
 if __name__ == "__main__":
-    import asyncio
-    from mcp.server.stdio import stdio_server
+    import uvicorn
 
-    async def main():
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options(),
-            )
-
-    asyncio.run(main())
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
