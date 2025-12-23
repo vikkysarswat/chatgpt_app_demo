@@ -312,43 +312,8 @@ async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
 # Wiring
 # ---------------------------------------------------------------------------
 
-mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_request
-mcp._mcp_server.request_handlers[types.ReadResourceRequest] = _handle_read_resource
-
-
-from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse
-from starlette.routing import Route
-
-mcp_app = mcp.streamable_http_app()
-
-async def root(request):
-    return PlainTextResponse("MCP server running", status_code=200)
-
-app = Starlette(
-    routes=[
-        Route("/", root),
-    ]
-)
-
-# ✅ Mount MCP on a SUBPATH, not /
-app.mount("/mcp", mcp_app)
-
-try:
-    from starlette.middleware.cors import CORSMiddleware
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-        allow_credentials=False,
-    )
-except Exception:
-    pass
-
+app = mcp.streamable_http_app()
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run("server:app", host="0.0.0.0", port=8000)
