@@ -232,17 +232,28 @@ mcp._mcp_server.request_handlers[types.CallToolRequest] = call_tool
 # HTTP APP (STARLETTE)
 # ----------------------------
 
+# ----------------------------
+# HTTP APP (FINAL FIX)
+# ----------------------------
+
 from starlette.applications import Starlette
 from starlette.routing import Mount
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
 mcp_app = mcp.streamable_http_app()
-app = mcp.streamable_http_app()
+
 app = Starlette(
     routes=[
+        Mount("/mcp", app=mcp_app),
         Mount("/.well-known/mcp", app=mcp_app),
-        Mount("/mcp", app=mcp_app),   # ✅ REQUIRED for ChatGPT
     ]
+)
+
+# ✅ CRITICAL: allow Render + ChatGPT host headers
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*"],
 )
 
 app.add_middleware(
@@ -251,11 +262,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ----------------------------
-# RUN
-# ----------------------------
-
 # ----------------------------
 # RUN (RENDER + MCP FIX)
 # ----------------------------
