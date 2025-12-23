@@ -214,9 +214,19 @@ async def call_tool(req: types.CallToolRequest):
     )
 
 # ----------------------------
-# RUN (STDIO)
+# RUN (STDIO – CORRECT FINAL)
 # ----------------------------
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(server.run_stdio())
+    from mcp.server.stdio import stdio_server
+
+    async def main():
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+
+    asyncio.run(main())
