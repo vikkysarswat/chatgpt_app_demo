@@ -246,8 +246,14 @@ app.add_middleware(
 # ----------------------------
 
 if __name__ == "__main__":
+    import os
+    import uvicorn
+
+    port = int(os.environ.get("PORT", 8000))
+
     uvicorn.run(
         app,
         host="0.0.0.0",
-        http="h11",  # Render requires HTTP/1.1
+        port=port,      # ✅ REQUIRED for Render
+        http="h11",
     )
