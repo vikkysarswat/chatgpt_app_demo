@@ -245,6 +245,10 @@ app.add_middleware(
 # RUN
 # ----------------------------
 
+# ----------------------------
+# RUN (RENDER + MCP FIX)
+# ----------------------------
+
 if __name__ == "__main__":
     import os
     import uvicorn
@@ -254,6 +258,8 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=port,      # ✅ REQUIRED for Render
+        port=port,
         http="h11",
+        proxy_headers=True,      # ✅ required on Render
+        forwarded_allow_ips="*", # ✅ allow Render + ChatGPT IPs
     )
