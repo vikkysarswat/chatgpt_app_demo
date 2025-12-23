@@ -315,8 +315,23 @@ async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
 mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_request
 mcp._mcp_server.request_handlers[types.ReadResourceRequest] = _handle_read_resource
 
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 
-app = mcp.streamable_http_app()
+mcp_app = mcp.streamable_http_app()
+
+async def root(request):
+    return PlainTextResponse("MCP server running", status_code=200)
+
+app = Starlette(
+    routes=[
+        Route("/", root),
+    ]
+)
+
+app.mount("/", mcp_app)
+
 
 
 try:
