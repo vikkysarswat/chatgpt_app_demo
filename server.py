@@ -232,7 +232,18 @@ mcp._mcp_server.request_handlers[types.CallToolRequest] = call_tool
 # HTTP APP (STARLETTE)
 # ----------------------------
 
+from starlette.applications import Starlette
+from starlette.routing import Mount
+from fastapi.middleware.cors import CORSMiddleware
+
+mcp_app = mcp.streamable_http_app()
 app = mcp.streamable_http_app()
+app = Starlette(
+    routes=[
+        Mount("/.well-known/mcp", app=mcp_app),
+        Mount("/mcp", app=mcp_app),   # ✅ REQUIRED for ChatGPT
+    ]
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -260,6 +271,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         http="h11",
-        proxy_headers=True,      # ✅ required on Render
-        forwarded_allow_ips="*", # ✅ allow Render + ChatGPT IPs
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
