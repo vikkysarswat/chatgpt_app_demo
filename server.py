@@ -1,7 +1,5 @@
 """
-Minimal MCP widget server (Python) that renders a carousel inside ChatGPT
-using the same mechanism as the Pizzaz Dev Day demo.
-
+Minimal MCP widget server (Python)
 - FastMCP
 - HTML widget (Skybridge)
 - structuredContent hydration
@@ -16,8 +14,10 @@ from copy import deepcopy
 
 import mcp.types as types
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
+from pydantic import BaseModel, Field, ConfigDict, ValidationError
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 # ----------------------------
 # CONFIG
@@ -25,7 +25,6 @@ from pydantic import BaseModel, Field, ConfigDict, ValidationError
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 MIME_TYPE = "text/html+skybridge"
-
 
 # ----------------------------
 # WIDGET MODEL
@@ -51,7 +50,6 @@ def load_html(name: str) -> str:
         )
     return path.read_text(encoding="utf-8")
 
-
 # ----------------------------
 # WIDGET REGISTRY
 # ----------------------------
@@ -71,7 +69,6 @@ widgets: List[Widget] = [
 WIDGET_BY_ID: Dict[str, Widget] = {w.identifier: w for w in widgets}
 WIDGET_BY_URI: Dict[str, Widget] = {w.template_uri: w for w in widgets}
 
-
 # ----------------------------
 # INPUT SCHEMA
 # ----------------------------
@@ -84,13 +81,10 @@ class StockInput(BaseModel):
 
 TOOL_SCHEMA: Dict[str, Any] = {
     "type": "object",
-    "properties": {
-        "query": {"type": "string"}
-    },
+    "properties": {"query": {"type": "string"}},
     "required": ["query"],
     "additionalProperties": False,
 }
-
 
 # ----------------------------
 # MCP SERVER
@@ -101,7 +95,6 @@ mcp = FastMCP(
     stateless_http=True,
 )
 
-
 def widget_meta(w: Widget) -> Dict[str, Any]:
     return {
         "openai/outputTemplate": w.template_uri,
@@ -109,7 +102,6 @@ def widget_meta(w: Widget) -> Dict[str, Any]:
         "openai/toolInvocation/invoking": w.invoking,
         "openai/toolInvocation/invoked": w.invoked,
     }
-
 
 # ----------------------------
 # LIST TOOLS
@@ -133,12 +125,9 @@ async def list_tools():
         for w in widgets
     ]
 
-
 # ----------------------------
 # LIST RESOURCES
 # ----------------------------
-
-
 
 @mcp._mcp_server.list_resources()
 async def list_resources():
@@ -153,7 +142,6 @@ async def list_resources():
         )
         for w in widgets
     ]
-
 
 # ----------------------------
 # READ RESOURCE (HTML)
@@ -178,7 +166,6 @@ async def read_resource(req: types.ReadResourceRequest):
             ]
         )
     )
-
 
 # ----------------------------
 # CALL TOOL
@@ -209,7 +196,7 @@ async def call_tool(req: types.CallToolRequest):
             )
         )
 
-    # 👇 THIS DATA HYDRATES THE WIDGET
+    # 👇 DATA HYDRATES THE WIDGET
     structured_content = {
         "stocks": [
             {"symbol": "RELIANCE", "price": 2485, "change": "+1.2%"},
@@ -221,7 +208,10 @@ async def call_tool(req: types.CallToolRequest):
     return types.ServerResult(
         types.CallToolResult(
             content=[
-                types.TextContent(type="text", text=widget.response_text)
+                types.TextContent(
+                    type="text",
+                    text=widget.response_text,
+                )
             ],
             structuredContent=structured_content,
             _meta={
@@ -231,24 +221,18 @@ async def call_tool(req: types.CallToolRequest):
         )
     )
 
-
 # ----------------------------
-# WIRE HANDLERS
+# WIRE MCP HANDLERS
 # ----------------------------
 
 mcp._mcp_server.request_handlers[types.ReadResourceRequest] = read_resource
 mcp._mcp_server.request_handlers[types.CallToolRequest] = call_tool
-from fastapi.middleware.cors import CORSMiddleware
-
-
-
 
 # ----------------------------
-# HTTP APP
+# HTTP APP (STARLETTE)
 # ----------------------------
 
 app = mcp.streamable_http_app()
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -257,17 +241,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/mcp")
-async def mcp_endpoint():
-    return await mcp.handle_http_request()
 # ----------------------------
 # RUN
 # ----------------------------
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(
         app,
         host="0.0.0.0",
-        http="h11",       # <--- force HTTP/1.1
+        http="h11",  # Render requires HTTP/1.1
     )
